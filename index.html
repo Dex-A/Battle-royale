@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Battle Royale</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        #game {
+            border: 1px solid #000;
+            width: 800px;
+            height: 600px;
+            position: relative;
+            overflow: hidden;
+            margin-bottom: 20px;
+            background-color: #87CEEB; /* Sky color */
+        }
+        .bot {
+            width: 20px;
+            height: 20px;
+            position: absolute;
+            border-radius: 50%;
+            transition: left 0.1s, top 0.1s;
+        }
+        .alive {
+            background-color: red;
+        }
+        .dead {
+            background-color: gray;
+        }
+        .wall {
+            background-color: blue;
+            position: absolute;
+            width: 10px;
+            height: 10px;
+        }
+        .tree {
+            background-color: green;
+            position: absolute;
+            width: 15px;
+            height: 25px;
+            border-radius: 5px;
+        }
+        .rock {
+            background-color: gray;
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+        }
+        #chat {
+            border: 1px solid #000;
+            width: 800px;
+            height: 100px;
+            overflow-y: auto;
+            background-color: #fff;
+            padding: 5px;
+        }
+        #chat-input {
+            width: 800px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Battle Royale Bots</h1>
+<div id="game"></div>
+<div id="chat"></div>
+<input type="text" id="chat-input" placeholder="Type your message...">
+<button onclick="sendMessage()">Send</button>
+
+<script>
+    const gameArea = document.getElementById('game');
+    const chatArea = document.getElementById('chat');
+    const chatInput = document.getElementById('chat-input');
+    const bots = [];
+    const botCount = 50;
+    const botRadius = 20;
+    const wallCooldown = 500; // Time in ms to wait before building walls again
+    const stormShrinkRate = 1; // Rate at which the storm shrinks
+    const stormRadius = 300; // Initial storm radius
+    let gameInterval;
+    let stormRadiusCurrent = stormRadius;
+    const walls = [];
+
+    class Bot {
+        constructor(id) {
+            this.id = id;
+            this.el = document.createElement('div');
+            this.el.className = 'bot alive';
+            this.x = Math.random() * (gameArea.clientWidth - botRadius);
+            this.y = Math.random() * (gameArea.clientHeight - botRadius);
+            this.health = 100;
+            this.alive = true;
+            this.kills = 0;
+            this.lastWallTime = 0; // Time when last wall was built
+            gameArea.appendChild(this.el);
+            this.updatePosition();
+        }
+
+        updatePosition() {
+            this.el.style.left = this.x + 'px';
+            this.el.style.top = this.y + 'px';
+        }
+
+        moveTowards(target) {
+            const speed = 2; // Movement speed
+            if (this.alive && target.alive) {
+                const dx = target.x - this.x;
+                const dy = target.y - this.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance > 1) {
+                    // Move towards target
+                    this.x += (dx / distance) * speed;
+                    this.y += (dy / distance) * speed;
+
+                    // Check for collision with walls or other bots
+                    this.checkCollisions();
+                    this.updatePosition();
+                }
+            }
+        }
+
+        attack(target) {
+            if (this.alive && target.alive) {
+                const attackType = Math.random() < 0.5 ? 'shoot' : 'knife'; // Randomly choose attack type
+                if (attackType === 'shoot') {
+                    target.health -= 10; // Shooting damage
+                    addChatMessage(`Bot ${this.id} shot Bot ${target.id}!`);
+                } else {
+                    target.health -= 5; // Knife damage
+                    addChatMessage(`Bot ${this.id} stabbed Bot ${target.id}!`);
+                }
+                if (target.health <= 0) {
+                    target.die();
+                    this.kills++;
+                }
+            }
+        }
+
+        buildWall() {
+            if (this.alive && (Date.now() - this.lastWallTime > wallCooldown)) {
+                const wall = document.createElement('div');
+                wall.className = 'wall';
+                wall.style.left = this.x + 10 + 'px';
+                wall.style.top = this.y + 10 + 'px';
+                gameArea.appendChild(wall);
+                walls.push({ x: this.x + 10, y: this.y + 10 }); // Store wall position
+                this.lastWallTime = Date.now();
+                addChatMessage(`Bot ${this.id} built a wall!`);
+            }
+        }
+
+        die() {
+            this.alive = false;
+            this.el.classList.remove('alive');
+            this.el.classList.add('dead');
+            this.el.innerText = "X"; // Mark as dead
+            addChatMessage(`Bot ${this.id} has been eliminated!`);
+        }
+
+        isOutOfBounds() {
+            const centerX = gameArea.clientWidth / 2;
+            const centerY = gameArea.clientHeight / 2;
+            const distanceFromCenter = Math.sqrt((this.x - centerX) ** 2 + (this.y - centerY) ** 2);
+            return distanceFromCenter > stormRadiusCurrent;
+        }
+
+        checkCollisions() {
+            // Check for wall collisions
+            for (let wall of walls) {
+                const wallSize = 10; // Size of the wall
+                if (this.x < wall.x + wallSize &&
+                    this.x + botRadius > wall.x &&
+                    this.y < wall.y + wallSize &&
+                    this.y + botRadius > wall.y) {
+                    // Collision detected, revert position
+                    const dx = wall.x - (this.x + botRadius);
+                    const dy = wall.y - (this.y + botRadius);
+                    if (Math.abs(dx) > Math.abs(dy)) {
+                        this.x -= dx > 0 ? 1 : -1;
+                    } else {
+                        this.y -= dy > 0 ? 1 : -1;
+                    }
+                }
+            }
+
+            // Check for bot collisions
+            for (let otherBot of bots) {
+                if (otherBot !== this && otherBot.alive) {
+                    if (this.x < otherBot.x + botRadius &&
+                        this.x + botRadius > otherBot.x &&
+                        this.y < otherBot.y + botRadius &&
+                        this.y + botRadius > otherBot.y) {
+                        // Collision detected, revert position
+                        const dx = otherBot.x - (this.x + botRadius);
+                        const dy = otherBot.y - (this.y + botRadius);
+                        if (Math.abs(dx) > Math.abs(dy)) {
+                            this.x -= dx > 0 ? 1 : -1;
+                        } else {
+                            this.y -= dy > 0 ? 1 : -1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    function createBots() {
+        for (let i = 0; i < botCount; i++) {
+            bots.push(new Bot(i));
+        }
+    }
+
+    function createIsland() {
+        const islandRadius = 200; // Radius of the island
+        const centerX = gameArea.clientWidth / 2;
+        const centerY = gameArea.clientHeight / 2;
+
+        // Create trees
+        for (let i = 0; i < 10; i++) {
+            const tree = document.createElement('div');
+            tree.className = 'tree';
+            tree.style.left = centerX + (Math.random() - 0.5) * islandRadius + 'px';
+            tree.style.top = centerY + (Math.random() - 0.5) * islandRadius + 'px';
+            gameArea.appendChild(tree);
+        }
+
+        // Create rocks
+        for (let i = 0; i < 10; i++) {
+            const rock = document.createElement('div');
+            rock.className = 'rock';
+            rock.style.left = centerX + (Math.random() - 0.5) * islandRadius + 'px';
+            rock.style.top = centerY + (Math.random() - 0.5) * islandRadius + 'px';
+            gameArea.appendChild(rock);
+        }
+    }
+
+    function startGame() {
+        createBots();
+        createIsland();
+        gameInterval = setInterval(updateGame, 1000);
+    }
+
+    function updateGame() {
+        // Check for out of bounds and storm damage
+        for (let bot of bots) {
+            if (bot.alive) {
+                if (bot.isOutOfBounds()) {
+                    bot.die();
+                } else {
+                    const target = bots[Math.floor(Math.random() * bots.length)];
+                    if (bot.alive) {
+                        bot.moveTowards(target);
+                        if (Math.random() < 0.1) {
+                            bot.attack(target);
+                        }
+                        if (Math.random() < 0.05) {
+                            bot.buildWall();
+                        }
+                    }
+                }
+            }
+        }
+
+        // Shrink storm radius
+        stormRadiusCurrent -= stormShrinkRate;
+        if (stormRadiusCurrent <= 0) {
+            clearInterval(gameInterval);
+            addChatMessage("The storm has consumed everything!");
+        }
+    }
+
+    function addChatMessage(message) {
+        const messageDiv = document.createElement('div');
+        messageDiv.innerText = message;
+        chatArea.appendChild(messageDiv);
+        chatArea.scrollTop = chatArea.scrollHeight; // Scroll to bottom
+    }
+
+    function sendMessage() {
+        const message = chatInput.value;
+        if (message) {
+            addChatMessage(`You: ${message}`);
+            chatInput.value = ''; // Clear input
+        }
+    }
+
+    window.onload = startGame;
+</script>
+
+</body>
+</html>
